@@ -3,8 +3,15 @@ import axios from "axios";
 
 function App() {
     const [proposals, setProposals] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState("");
+
+    const [title, setTitle] = useState("");
+    const [description, setDescription] = useState("");
+    const [proposerWallet, setProposerWallet] = useState(
+        "0x1234567890abcdef1234567890abcdef12345678"
+    );
+
+    const [loading, setLoading] = useState(false);
+    const [message, setMessage] = useState("");
 
     const fetchProposals = async () => {
         try {
@@ -13,11 +20,8 @@ function App() {
             );
 
             setProposals(response.data);
-        } catch (err) {
-            console.error(err);
-            setError("Failed to load proposals");
-        } finally {
-            setLoading(false);
+        } catch (error) {
+            console.error(error);
         }
     };
 
@@ -25,8 +29,59 @@ function App() {
         fetchProposals();
     }, []);
 
+    const handleCreateProposal = async (event) => {
+        event.preventDefault();
+
+        if (!title || !description || !proposerWallet) {
+            setMessage("Please fill all fields.");
+            return;
+        }
+
+        try {
+            setLoading(true);
+            setMessage("");
+
+            const response = await axios.post(
+                "http://localhost:5000/api/proposals",
+                {
+                    title,
+                    description,
+                    proposerWallet
+                }
+            );
+
+            const validation = response.data.proposal.aiValidation;
+
+            if (validation.status === "approved") {
+                setMessage(
+                    `Proposal approved. Similarity score: ${validation.similarityScore}`
+                );
+            } else {
+                setMessage(
+                    `Proposal rejected. ${validation.reason}`
+                );
+            }
+
+            setTitle("");
+            setDescription("");
+
+            await fetchProposals();
+
+        } catch (error) {
+            console.error(error);
+
+            setMessage(
+                error.response?.data?.message ||
+                "Failed to create proposal."
+            );
+        } finally {
+            setLoading(false);
+        }
+    };
+
     return (
-        <div style={{ padding: "30px" }}>
+        <div style={{ padding: "30px", maxWidth: "1000px", margin: "auto" }}>
+
             <h1>DAO Governance Platform</h1>
 
             <p>
@@ -36,13 +91,106 @@ function App() {
 
             <hr />
 
+            <h2>Create Proposal</h2>
+
+            <form onSubmit={handleCreateProposal}>
+
+                <div style={{ marginBottom: "15px" }}>
+                    <label>
+                        <strong>Proposal Title</strong>
+                    </label>
+
+                    <br />
+
+                    <input
+                        type="text"
+                        value={title}
+                        onChange={(e) => setTitle(e.target.value)}
+                        placeholder="Enter proposal title"
+                        style={{
+                            width: "100%",
+                            padding: "10px",
+                            marginTop: "5px"
+                        }}
+                    />
+                </div>
+
+                <div style={{ marginBottom: "15px" }}>
+                    <label>
+                        <strong>Description</strong>
+                    </label>
+
+                    <br />
+
+                    <textarea
+                        value={description}
+                        onChange={(e) =>
+                            setDescription(e.target.value)
+                        }
+                        placeholder="Enter proposal description"
+                        rows="5"
+                        style={{
+                            width: "100%",
+                            padding: "10px",
+                            marginTop: "5px"
+                        }}
+                    />
+                </div>
+
+                <div style={{ marginBottom: "15px" }}>
+                    <label>
+                        <strong>Proposer Wallet</strong>
+                    </label>
+
+                    <br />
+
+                    <input
+                        type="text"
+                        value={proposerWallet}
+                        onChange={(e) =>
+                            setProposerWallet(e.target.value)
+                        }
+                        style={{
+                            width: "100%",
+                            padding: "10px",
+                            marginTop: "5px"
+                        }}
+                    />
+                </div>
+
+                <button
+                    type="submit"
+                    disabled={loading}
+                    style={{
+                        padding: "10px 20px",
+                        cursor: "pointer"
+                    }}
+                >
+                    {loading
+                        ? "Validating..."
+                        : "Validate & Create Proposal"}
+                </button>
+
+            </form>
+
+            {message && (
+                <div
+                    style={{
+                        marginTop: "20px",
+                        padding: "15px",
+                        border: "1px solid #ccc"
+                    }}
+                >
+                    <strong>Validation Result:</strong>
+                    <p>{message}</p>
+                </div>
+            )}
+
+            <hr style={{ marginTop: "30px" }} />
+
             <h2>Proposals</h2>
 
-            {loading && <p>Loading proposals...</p>}
-
-            {error && <p>{error}</p>}
-
-            {!loading && !error && proposals.length === 0 && (
+            {proposals.length === 0 && (
                 <p>No proposals found.</p>
             )}
 
