@@ -3,6 +3,7 @@ import axios from "axios";
 
 function App() {
     const [proposals, setProposals] = useState([]);
+    const [profile, setProfile] = useState(null);
 
     const [title, setTitle] = useState("");
     const [description, setDescription] = useState("");
@@ -21,12 +22,25 @@ function App() {
 
             setProposals(response.data);
         } catch (error) {
-            console.error(error);
+            console.error("Failed to load proposals:", error);
+        }
+    };
+
+    const fetchProfile = async () => {
+        try {
+            const response = await axios.get(
+                "http://localhost:5000/api/profile/0x1234567890abcdef1234567890abcdef12345678"
+            );
+
+            setProfile(response.data);
+        } catch (error) {
+            console.error("Failed to load profile:", error);
         }
     };
 
     useEffect(() => {
         fetchProposals();
+        fetchProfile();
     }, []);
 
     const handleCreateProposal = async (event) => {
@@ -50,7 +64,8 @@ function App() {
                 }
             );
 
-            const validation = response.data.proposal.aiValidation;
+            const validation =
+                response.data.proposal.aiValidation;
 
             if (validation.status === "approved") {
                 setMessage(
@@ -79,9 +94,21 @@ function App() {
         }
     };
 
-    return (
-        <div style={{ padding: "30px", maxWidth: "1000px", margin: "auto" }}>
+    const votingWeight = profile
+        ? profile.tokenBalance +
+          profile.reputation +
+          profile.participation +
+          profile.contribution
+        : 0;
 
+    return (
+        <div
+            style={{
+                padding: "30px",
+                maxWidth: "1000px",
+                margin: "auto"
+            }}
+        >
             <h1>DAO Governance Platform</h1>
 
             <p>
@@ -91,10 +118,57 @@ function App() {
 
             <hr />
 
+            {/* Governance Profile */}
+            <h2>My Governance Profile</h2>
+
+            {profile ? (
+                <div
+                    style={{
+                        border: "1px solid #ccc",
+                        padding: "20px",
+                        marginBottom: "25px",
+                        borderRadius: "8px"
+                    }}
+                >
+                    <p>
+                        <strong>Wallet:</strong>{" "}
+                        {profile.walletAddress}
+                    </p>
+
+                    <p>
+                        <strong>Token Balance:</strong>{" "}
+                        {profile.tokenBalance}
+                    </p>
+
+                    <p>
+                        <strong>Reputation:</strong>{" "}
+                        {profile.reputation}
+                    </p>
+
+                    <p>
+                        <strong>Participation:</strong>{" "}
+                        {profile.participation}
+                    </p>
+
+                    <p>
+                        <strong>Contribution:</strong>{" "}
+                        {profile.contribution}
+                    </p>
+
+                    <hr />
+
+                    <h3>
+                        Voting Weight: {votingWeight}
+                    </h3>
+                </div>
+            ) : (
+                <p>Loading governance profile...</p>
+            )}
+
+            {/* Create Proposal */}
             <h2>Create Proposal</h2>
 
             <form onSubmit={handleCreateProposal}>
-
                 <div style={{ marginBottom: "15px" }}>
                     <label>
                         <strong>Proposal Title</strong>
@@ -105,7 +179,9 @@ function App() {
                     <input
                         type="text"
                         value={title}
-                        onChange={(e) => setTitle(e.target.value)}
+                        onChange={(e) =>
+                            setTitle(e.target.value)
+                        }
                         placeholder="Enter proposal title"
                         style={{
                             width: "100%",
@@ -170,9 +246,9 @@ function App() {
                         ? "Validating..."
                         : "Validate & Create Proposal"}
                 </button>
-
             </form>
 
+            {/* Validation Result */}
             {message && (
                 <div
                     style={{
@@ -188,6 +264,7 @@ function App() {
 
             <hr style={{ marginTop: "30px" }} />
 
+            {/* Proposals */}
             <h2>Proposals</h2>
 
             {proposals.length === 0 && (
