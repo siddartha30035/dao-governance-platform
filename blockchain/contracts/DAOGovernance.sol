@@ -20,7 +20,7 @@ contract DAOGovernance {
         uint256 votingWeight;
     }
 
-    uint256 private proposalCounter;
+    uint256 public proposalCounter;
 
     mapping(uint256 => Proposal) public proposals;
 
@@ -39,15 +39,15 @@ contract DAOGovernance {
         uint256 votingWeight
     );
 
-    constructor() {
-        proposalCounter = 0;
-    }
+    event ProposalClosed(uint256 indexed proposalId);
 
     // Create a new proposal
     function createProposal(
         string memory title,
         string memory description
     ) public {
+        require(bytes(title).length > 0, "Title cannot be empty");
+        require(bytes(description).length > 0, "Description cannot be empty");
 
         proposalCounter++;
 
@@ -75,6 +75,10 @@ contract DAOGovernance {
         bool support,
         uint256 votingWeight
     ) public {
+        require(
+            proposalId > 0 && proposalId <= proposalCounter,
+            "Proposal does not exist"
+        );
 
         require(
             proposals[proposalId].active,
@@ -117,6 +121,10 @@ contract DAOGovernance {
 
     // Close voting for a proposal
     function closeProposal(uint256 proposalId) public {
+        require(
+            proposalId > 0 && proposalId <= proposalCounter,
+            "Proposal does not exist"
+        );
 
         require(
             proposals[proposalId].active,
@@ -124,6 +132,8 @@ contract DAOGovernance {
         );
 
         proposals[proposalId].active = false;
+
+        emit ProposalClosed(proposalId);
     }
 
     // Get the current result
@@ -139,6 +149,11 @@ contract DAOGovernance {
             bool active
         )
     {
+        require(
+            proposalId > 0 && proposalId <= proposalCounter,
+            "Proposal does not exist"
+        );
+
         Proposal memory proposal = proposals[proposalId];
 
         return (
