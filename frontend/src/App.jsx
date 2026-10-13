@@ -1,16 +1,20 @@
-
 import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
+import Layout from "./Layout";
+import Dashboard from "./pages/Dashboard";
+import Proposals from "./pages/Proposals";
 import { BrowserProvider, Contract } from "ethers";
 import {
   DAO_CONTRACT_ADDRESS,
   DAO_CONTRACT_ABI,
 } from "./contracts/daoContract";
+import "./App.css";
 
 const API = "http://localhost:5000/api";
 
 function App() {
   const [proposals, setProposals] = useState([]);
+  const [page, setPage] = useState("dashboard");
   const [onChainResults, setOnChainResults] = useState({});
   const [profile, setProfile] = useState(null);
   const [walletAddress, setWalletAddress] = useState("");
@@ -289,6 +293,7 @@ function App() {
 
   // Load proposals and listen for wallet changes.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchProposals();
   }, [fetchProposals]);
 
@@ -552,7 +557,7 @@ function App() {
       setMessage(
         `Vote recorded successfully! ${
           support ? "YES" : "NO"
-        } vote. On-chain totals — YES: ${result[0].toString()}, NO: ${result[1].toString()}, Total voting weight: ${result[2].toString()}.`
+        } vote. On-chain totals â€” YES: ${result[0].toString()}, NO: ${result[1].toString()}, Total voting weight: ${result[2].toString()}.`
       );
 
       await fetchProfile(walletAddress);
@@ -573,204 +578,112 @@ function App() {
     }
   };
 
-  const styles = {
-    card: {
-      border: "1px solid #888",
-      borderRadius: "8px",
-      padding: "20px",
-      marginBottom: "15px",
-      overflowWrap: "anywhere",
-    },
-    button: {
-      padding: "10px 18px",
-      margin: "5px",
-      cursor: "pointer",
-      borderRadius: "5px",
-    },
-    input: {
-      width: "100%",
-      boxSizing: "border-box",
-      padding: "10px",
-      marginTop: "5px",
-      marginBottom: "15px",
-    },
-  };
 
-  return (
-    <div
-      style={{
-        padding: "30px",
-        maxWidth: "1000px",
-        margin: "auto",
-      }}
-    >
-      <h1>DAO Governance Platform</h1>
+  const shortWallet = (address) =>
+    address ? `${address.slice(0, 6)}...${address.slice(-4)}` : "Not connected";
 
-      <button style={styles.button} onClick={connectWallet}>
-        {walletConnected
-          ? `Connected: ${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`
-          : "Connect MetaMask"}
-      </button>
+  
+return (
+  <Layout
+    page={page}
+    setPage={setPage}
+    walletConnected={walletConnected}
+    walletAddress={walletAddress}
+    connectWallet={connectWallet}
+    changeWallet={changeWallet}
+    disconnectWallet={disconnectWallet}
+  >
+    {message && (
+      <div className="notice notice-info" role="status">
+        <p>{message}</p>
+        <button onClick={() => setMessage("")}>Dismiss</button>
+      </div>
+    )}
 
-      <button style={styles.button} onClick={changeWallet}>
-        Change Wallet
-      </button>
+    {page === "dashboard" && (
+  <Dashboard
+    walletConnected={walletConnected}
+    walletAddress={walletAddress}
+    votingWeight={votingWeight}
+    proposals={proposals}
+    setPage={setPage}
+  />
+)}
 
-      {walletConnected && (
-        <button style={styles.button} onClick={disconnectWallet}>
-          Disconnect App
-        </button>
-      )}
+    {page === "proposals" && (
+      <Proposals
+        proposals={proposals}
+        onChainResults={onChainResults}
+        walletConnected={walletConnected}
+        loading={loading}
+        votingId={votingId}
+        fetchProposals={fetchProposals}
+        handleCreateOnBlockchain={handleCreateOnBlockchain}
+        handleVote={handleVote}
+      />
+    )}
 
-      <p>Blockchain-Based DAO Governance with Reputation-Driven Voting</p>
+    {page === "create" && (
+      <section className="section-block create-section">
+        <h2>Create a Proposal</h2>
+        <p>Submit your idea for validation before creating it on-chain.</p>
 
-      <hr />
-
-      <h2>My Governance Profile</h2>
-
-      {profile ? (
-        <div style={styles.card}>
-          <p><strong>Wallet:</strong> {profile.walletAddress}</p>
-          <p><strong>Token Balance:</strong> {profile.tokenBalance}</p>
-          <p><strong>Reputation:</strong> {profile.reputation}</p>
-          <p><strong>Participation:</strong> {profile.participation}</p>
-          <p><strong>Contribution:</strong> {profile.contribution}</p>
-          <hr />
-          <h3>Voting Weight: {votingWeight}</h3>
-        </div>
-      ) : (
-        <p>Connect MetaMask to load your governance profile.</p>
-      )}
-
-      <h2>Create Proposal</h2>
-
-      <form onSubmit={handleCreateProposal}>
-        <label><strong>Proposal Title</strong></label>
-        <input
-          type="text"
-          value={title}
-          onChange={(event) => setTitle(event.target.value)}
-          placeholder="Enter proposal title"
-          style={styles.input}
-        />
-
-        <label><strong>Description</strong></label>
-        <textarea
-          value={description}
-          onChange={(event) => setDescription(event.target.value)}
-          placeholder="Enter proposal description"
-          rows={5}
-          style={styles.input}
-        />
-
-        <button
-          type="submit"
-          disabled={loading || !walletConnected}
-          style={styles.button}
-        >
-          {loading ? "Processing..." : "Validate & Create Proposal"}
-        </button>
-      </form>
-
-      {message && (
-        <div style={styles.card}>
-          <strong>Result:</strong>
-          <p>{message}</p>
-        </div>
-      )}
-
-      <hr style={{ marginTop: "30px" }} />
-
-      <h2>Proposals</h2>
-
-      <button
-        style={styles.button}
-        onClick={fetchProposals}
-        disabled={loading}
-      >
-        Refresh Proposals & Votes
-      </button>
-
-      {proposals.length === 0 && <p>No proposals found.</p>}
-
-      {proposals.map((proposal) => {
-        const chainResult = onChainResults[proposal._id];
-
-        const approved =
-          proposal.aiValidation?.status === "approved" &&
-          proposal.status === "active";
-
-        return (
-          <div key={proposal._id} style={styles.card}>
-            <h3>{proposal.title}</h3>
-            <p>{proposal.description}</p>
-            <p><strong>Proposer:</strong> {proposal.proposerWallet}</p>
-            <p>
-              <strong>AI Validation:</strong>{" "}
-              {proposal.aiValidation?.status || "unknown"}
-            </p>
-            <p>
-              <strong>Similarity Score:</strong>{" "}
-              {proposal.aiValidation?.similarityScore ?? "N/A"}
-            </p>
-            <p><strong>Database Status:</strong> {proposal.status}</p>
-
-            {chainResult?.found ? (
-              <>
-                <p><strong>Blockchain Proposal ID:</strong> {chainResult.id}</p>
-                <p><strong>On-chain YES:</strong> {chainResult.yesVotes}</p>
-                <p><strong>On-chain NO:</strong> {chainResult.noVotes}</p>
-                <p>
-                  <strong>Total Voting Weight:</strong>{" "}
-                  {chainResult.totalVotingWeight}
-                </p>
-                <p>
-                  <strong>Blockchain Status:</strong>{" "}
-                  {chainResult.active ? "Active" : "Closed"}
-                </p>
-              </>
-            ) : (
-              <p>
-                <strong>Blockchain:</strong> Not created on the current deployment.
-              </p>
-            )}
-
-            {approved && !chainResult?.found && (
-              <button
-                style={styles.button}
-                disabled={!walletConnected || loading}
-                onClick={() => handleCreateOnBlockchain(proposal)}
-              >
-                {loading ? "Processing..." : "Create on Blockchain"}
-              </button>
-            )}
-
-            {approved &&
-              chainResult?.found &&
-              chainResult.active && (
-                <div>
-                  <button
-                    style={styles.button}
-                    disabled={!walletConnected || votingId !== null || loading}
-                    onClick={() => handleVote(proposal, true)}
-                  >
-                    {votingId === proposal._id ? "Processing..." : "Vote Yes"}
-                  </button>
-
-                  <button
-                    style={styles.button}
-                    disabled={!walletConnected || votingId !== null || loading}
-                    onClick={() => handleVote(proposal, false)}
-                  >
-                    {votingId === proposal._id ? "Processing..." : "Vote No"}
-                  </button>
-                </div>
-              )}
+        <form className="proposal-form" onSubmit={handleCreateProposal}>
+          <div className="form-field">
+            <label htmlFor="proposal-title">Proposal Title</label>
+            <input
+              id="proposal-title"
+              type="text"
+              maxLength={120}
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              placeholder="Enter proposal title"
+              required
+            />
           </div>
-        );
-      })}
-    </div>
-  );
+
+          <div className="form-field">
+            <label htmlFor="proposal-description">Description</label>
+            <textarea
+              id="proposal-description"
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              rows={5}
+              placeholder="Describe your proposal"
+              required
+            />
+          </div>
+
+          <button className="btn btn-primary" type="submit" disabled={loading || !walletConnected}>
+            {loading ? "Processing..." : "Validate & Create"}
+          </button>
+        </form>
+      </section>
+    )}
+
+    {page === "profile" && (
+      <section className="section-block">
+        <h2>My Governance Profile</h2>
+
+        {!walletConnected ? (
+          <p>Connect MetaMask to view your profile.</p>
+        ) : profile ? (
+          <div className="profile-panel">
+            <p>Wallet: {shortWallet(profile.walletAddress || walletAddress)}</p>
+            <p>Token balance: {profile.tokenBalance ?? 0}</p>
+            <p>Reputation: {profile.reputation ?? 0}</p>
+            <p>Participation: {profile.participation ?? 0}</p>
+            <p>Contribution: {profile.contribution ?? 0}</p>
+            <h3>Voting weight: {votingWeight}</h3>
+          </div>
+        ) : (
+          <p>Loading your profile, or no profile is available.</p>
+        )}
+      </section>
+    )}
+  </Layout>
+);
+
 }
 
 export default App;

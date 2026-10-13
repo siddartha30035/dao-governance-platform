@@ -1,7 +1,16 @@
-// SPDX-License-Identifier: MIT
+
+ // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
 contract DAOGovernance {
+
+    bytes32 public constant FOUNDER_ROLE = keccak256("FOUNDER_ROLE");
+    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
+    bytes32 public constant MEMBER_ROLE = keccak256("MEMBER_ROLE");
+
+    address public founder;
+
+    mapping(address => mapping(bytes32 => bool)) private roles;
 
     struct Proposal {
         uint256 id;
@@ -23,8 +32,10 @@ contract DAOGovernance {
     uint256 public proposalCounter;
 
     mapping(uint256 => Proposal) public proposals;
-
     mapping(uint256 => mapping(address => Vote)) public votes;
+
+    event RoleGranted(address indexed account, bytes32 indexed role);
+    event RoleRevoked(address indexed account, bytes32 indexed role);
 
     event ProposalCreated(
         uint256 indexed proposalId,
@@ -41,13 +52,65 @@ contract DAOGovernance {
 
     event ProposalClosed(uint256 indexed proposalId);
 
-    // Create a new proposal
+    modifier onlyFounder() {
+        require(roles[msg.sender][FOUNDER_ROLE], "Founder only");
+        _;
+    }
+
+    modifier onlyAdmin() {
+        require(roles[msg.sender][ADMIN_ROLE], "Admin only");
+        _;
+    }
+
+    constructor() {
+        founder = msg.sender;
+
+        _grantRole(msg.sender, FOUNDER_ROLE);
+        _grantRole(msg.sender, ADMIN_ROLE);
+        _grantRole(msg.sender, MEMBER_ROLE);
+    }
+
+    function _grantRole(address account, bytes32 role) internal {
+        require(account != address(0), "Invalid address");
+
+        if (!roles[account][role]) {
+            roles[account][role] = true;
+            emit RoleGranted(account, role);
+        }
+    }
+
+    function grantAdminRole(address account) external onlyFounder {
+        _grantRole(account, ADMIN_ROLE);
+    }
+
+    function revokeAdminRole(address account) external onlyFounder {
+        require(account != founder, "Cannot revoke founder");
+
+        require(roles[account][ADMIN_ROLE], "Not an admin");
+
+        roles[account][ADMIN_ROLE] = false;
+        emit RoleRevoked(account, ADMIN_ROLE);
+    }
+
+    function registerMember() external {
+        _grantRole(msg.sender, MEMBER_ROLE);
+    }
+
+    function hasRole(
+        address account,
+        bytes32 role
+    ) external view returns (bool) {
+        return roles[account][role];
+    }
+
     function createProposal(
         string memory title,
         string memory description
     ) public {
         require(bytes(title).length > 0, "Title cannot be empty");
         require(bytes(description).length > 0, "Description cannot be empty");
+
+        _grantRole(msg.sender, MEMBER_ROLE);
 
         proposalCounter++;
 
@@ -62,14 +125,9 @@ contract DAOGovernance {
             active: true
         });
 
-        emit ProposalCreated(
-            proposalCounter,
-            msg.sender,
-            title
-        );
+        emit ProposalCreated(proposalCounter, msg.sender, title);
     }
 
-    // Cast a weighted vote
     function castVote(
         uint256 proposalId,
         bool support,
@@ -80,20 +138,16 @@ contract DAOGovernance {
             "Proposal does not exist"
         );
 
-        require(
-            proposals[proposalId].active,
-            "Proposal is not active"
-        );
+        require(proposals[proposalId].active, "Proposal is not active");
 
         require(
             !votes[proposalId][msg.sender].hasVoted,
             "Already voted"
         );
 
-        require(
-            votingWeight > 0,
-            "Voting weight must be greater than zero"
-        );
+        require(votingWeight > 0, "Voting weight must be greater than zero");
+
+        _grantRole(msg.sender, MEMBER_ROLE);
 
         votes[proposalId][msg.sender] = Vote({
             hasVoted: true,
@@ -111,32 +165,22 @@ contract DAOGovernance {
             proposals[proposalId].yesVotes +
             proposals[proposalId].noVotes;
 
-        emit VoteCast(
-            proposalId,
-            msg.sender,
-            support,
-            votingWeight
-        );
+        emit VoteCast(proposalId, msg.sender, support, votingWeight);
     }
 
-    // Close voting for a proposal
-    function closeProposal(uint256 proposalId) public {
+    function closeProposal(uint256 proposalId) public onlyAdmin {
         require(
             proposalId > 0 && proposalId <= proposalCounter,
             "Proposal does not exist"
         );
 
-        require(
-            proposals[proposalId].active,
-            "Proposal already closed"
-        );
+        require(proposals[proposalId].active, "Proposal already closed");
 
         proposals[proposalId].active = false;
 
         emit ProposalClosed(proposalId);
     }
 
-    // Get the current result
     function getProposalResult(
         uint256 proposalId
     )
