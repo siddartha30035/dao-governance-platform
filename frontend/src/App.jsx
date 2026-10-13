@@ -11,6 +11,7 @@ const API = "http://localhost:5000/api";
 
 function App() {
   const [proposals, setProposals] = useState([]);
+  const [onChainResults, setOnChainResults] = useState({});
   const [profile, setProfile] = useState(null);
   const [walletAddress, setWalletAddress] = useState("");
   const [walletConnected, setWalletConnected] = useState(false);
@@ -28,20 +29,123 @@ function App() {
       Number(profile.contribution || 0)
     : 0;
 
-  // Load proposals from the backend
+  // Get a read-only contract for blockchain queries.
+  const getReadOnlyContract = useCallback(async () => {
+    if (!window.ethereum) {
+      throw new Error("MetaMask is not installed.");
+    }
+
+    const provider = new BrowserProvider(window.ethereum);
+    const network = await provider.getNetwork();
+
+    if (Number(network.chainId) !== 31337) {
+      throw new Error(
+        "Please switch MetaMask to Hardhat Local (chain ID 31337)."
+      );
+    }
+
+    return new Contract(
+      DAO_CONTRACT_ADDRESS,
+      DAO_CONTRACT_ABI,
+      provider
+    );
+  }, []);
+
+  // Find a proposal on-chain by title and description.
+  const findOnChainProposal = async (proposal, contract) => {
+    const count = Number(await contract.proposalCounter());
+
+    for (let id = 1; id <= count; id++) {
+      const data = await contract.proposals(id);
+
+      if (
+        data.title.trim().toLowerCase() ===
+          proposal.title.trim().toLowerCase() &&
+        data.description.trim() === proposal.description.trim()
+      ) {
+        return { id, data };
+      }
+    }
+
+    return null;
+  };
+
+  // Fetch live blockchain voting totals.
+  const fetchOnChainResults = useCallback(
+    async (proposalList) => {
+      if (!window.ethereum || proposalList.length === 0) {
+        setOnChainResults({});
+        return;
+      }
+
+      try {
+        const contract = await getReadOnlyContract();
+        const count = Number(await contract.proposalCounter());
+        const chainProposals = [];
+
+        for (let id = 1; id <= count; id++) {
+          const data = await contract.proposals(id);
+
+          chainProposals.push({
+            id,
+            title: data.title.trim().toLowerCase(),
+            description: data.description.trim(),
+            yesVotes: data.yesVotes.toString(),
+            noVotes: data.noVotes.toString(),
+            totalVotingWeight: data.totalVotingWeight.toString(),
+            active: data.active,
+          });
+        }
+
+        const results = {};
+
+        for (const proposal of proposalList) {
+          const match = chainProposals.find(
+            (item) =>
+              item.title === proposal.title.trim().toLowerCase() &&
+              item.description === proposal.description.trim()
+          );
+
+          results[proposal._id] = match
+            ? {
+                found: true,
+                id: match.id,
+                yesVotes: match.yesVotes,
+                noVotes: match.noVotes,
+                totalVotingWeight: match.totalVotingWeight,
+                active: match.active,
+              }
+            : { found: false };
+        }
+
+        setOnChainResults(results);
+      } catch (error) {
+        console.error("Failed to load blockchain results:", error);
+        setMessage(
+          "Could not load blockchain results. Check that Hardhat is running and MetaMask is on chain 31337."
+        );
+      }
+    },
+    [getReadOnlyContract]
+  );
+
+  // Fetch MongoDB proposals and then blockchain results.
   const fetchProposals = useCallback(async () => {
     try {
       const response = await axios.get(`${API}/proposals`);
-      setProposals(response.data);
+      const list = response.data;
+
+      setProposals(list);
+      await fetchOnChainResults(list);
     } catch (error) {
       console.error("Failed to load proposals:", error);
       setMessage(
         "Could not load proposals. Check whether the backend is running."
       );
     }
-  }, []);
+  }, [fetchOnChainResults]);
 
-  // Load the profile for the selected wallet
+  // Load the selected wallet profile.
   const fetchProfile = useCallback(async (address) => {
     if (!address) {
       setProfile(null);
@@ -57,7 +161,7 @@ function App() {
     }
   }, []);
 
-  // Update the app whenever a wallet is selected
+  // Apply the selected MetaMask account.
   const applyWalletAccount = useCallback(
     async (address) => {
       if (!address) {
@@ -105,7 +209,7 @@ function App() {
     [fetchProfile]
   );
 
-  // Connect the currently selected MetaMask account
+  // Connect MetaMask.
   const connectWallet = async () => {
     try {
       if (!window.ethereum) {
@@ -126,15 +230,12 @@ function App() {
     } catch (error) {
       console.error("Wallet connection failed:", error);
       setMessage(
-        error.response?.data?.message ||
-          error.shortMessage ||
-          error.message ||
-          "Wallet connection failed."
+        error.shortMessage || error.message || "Wallet connection failed."
       );
     }
   };
 
-  // Ask MetaMask to show its account permission selector
+  // Open MetaMask account selection.
   const changeWallet = async () => {
     try {
       if (!window.ethereum) {
@@ -151,7 +252,7 @@ function App() {
         method: "eth_accounts",
       });
 
-      if (accounts && accounts.length > 0) {
+      if (accounts.length > 0) {
         await applyWalletAccount(accounts[0]);
       } else {
         setMessage("No account is connected.");
@@ -159,37 +260,34 @@ function App() {
     } catch (error) {
       console.error("Wallet selection:", error);
 
-      // Sync the account even if the permission popup was closed
       try {
         const accounts = await window.ethereum.request({
           method: "eth_accounts",
         });
 
-        if (accounts && accounts.length > 0) {
+        if (accounts.length > 0) {
           await applyWalletAccount(accounts[0]);
         } else {
-          setMessage(
-            "Wallet selection cancelled. Select an account in MetaMask."
-          );
+          setMessage("Select an account in MetaMask.");
         }
       } catch (syncError) {
-        console.error("Could not sync wallet:", syncError);
+        console.error(syncError);
         setMessage("Could not update the selected wallet.");
       }
     }
   };
 
-  // Disconnect this app's wallet state
+  // Disconnect this app's wallet state.
   const disconnectWallet = () => {
     setWalletAddress("");
     setWalletConnected(false);
     setProfile(null);
     setMessage(
-      "Disconnected from this app. Select another MetaMask account and reconnect."
+      "Disconnected from this app. Reconnect to continue."
     );
   };
 
-  // Load proposals and listen for MetaMask account/network changes
+  // Load proposals and listen for wallet changes.
   useEffect(() => {
     fetchProposals();
   }, [fetchProposals]);
@@ -208,7 +306,7 @@ function App() {
           await applyWalletAccount(accounts[0]);
         }
       } catch (error) {
-        console.error("Account change failed:", error);
+        console.error(error);
         setMessage(error.message || "Could not update the wallet.");
       }
     };
@@ -229,7 +327,7 @@ function App() {
     };
   }, [applyWalletAccount]);
 
-  // Create a contract connected to the currently selected wallet
+  // Get a contract connected to the selected wallet.
   const getContract = async () => {
     if (!window.ethereum) {
       throw new Error("MetaMask is not installed.");
@@ -250,9 +348,8 @@ function App() {
       signerAddress.toLowerCase() !== walletAddress.toLowerCase()
     ) {
       await applyWalletAccount(signerAddress);
-
       throw new Error(
-        "Wallet changed. Your profile was updated. Please click the action again."
+        "Wallet changed. Your profile was updated. Please try again."
       );
     }
 
@@ -263,7 +360,7 @@ function App() {
     );
   };
 
-  // Create a proposal
+  // Create a proposal in MongoDB and on-chain.
   const handleCreateProposal = async (event) => {
     event.preventDefault();
 
@@ -283,7 +380,6 @@ function App() {
     try {
       const contract = await getContract();
 
-      // Validate and save through the backend first
       const response = await axios.post(`${API}/proposals`, {
         title: title.trim(),
         description: description.trim(),
@@ -291,43 +387,52 @@ function App() {
       });
 
       const proposal = response.data.proposal;
-      const validation = proposal?.aiValidation;
 
-      if (validation?.status !== "approved") {
+      if (proposal?.aiValidation?.status !== "approved") {
         setMessage(
-          `Proposal rejected by AI validation. ${
-            validation?.reason || "Similar proposal detected."
+          `Proposal rejected by validation. ${
+            proposal?.aiValidation?.reason ||
+            "Similar proposal detected."
           }`
         );
+        await fetchProposals();
+        return;
+      }
 
+      // Prevent creating a duplicate on-chain proposal.
+      const existing = await findOnChainProposal(proposal, contract);
+
+      if (existing) {
+        setMessage(
+          `This proposal already exists on-chain as proposal #${existing.id}.`
+        );
+        setTitle("");
+        setDescription("");
         await fetchProposals();
         return;
       }
 
       setMessage(
-        "Proposal approved. Confirm the transaction in MetaMask."
+        "Proposal approved. Confirm the blockchain transaction in MetaMask."
       );
 
       const transaction = await contract.createProposal(
-        title.trim(),
-        description.trim()
+        proposal.title.trim(),
+        proposal.description.trim()
       );
 
       setMessage("Transaction submitted. Waiting for confirmation...");
-
       await transaction.wait();
 
       setMessage(
-        `Proposal created successfully on blockchain! Transaction: ${transaction.hash}`
+        `Proposal created on blockchain successfully! Transaction: ${transaction.hash}`
       );
 
       setTitle("");
       setDescription("");
-
       await fetchProposals();
     } catch (error) {
       console.error("Proposal creation failed:", error);
-
       setMessage(
         error.code === "ACTION_REJECTED"
           ? "Transaction rejected in MetaMask."
@@ -337,32 +442,69 @@ function App() {
               error.message ||
               "Failed to create proposal."
       );
-
       await fetchProposals();
     } finally {
       setLoading(false);
     }
   };
 
-  // Find the matching proposal on the blockchain
-  const findOnChainProposal = async (proposal, contract) => {
-    const count = Number(await contract.proposalCounter());
-
-    for (let id = 1; id <= count; id++) {
-      const onChain = await contract.proposals(id);
-
-      if (
-        onChain.title.toLowerCase() === proposal.title.toLowerCase() &&
-        onChain.description.trim() === proposal.description.trim()
-      ) {
-        return { id, data: onChain };
-      }
+  // Create an already-approved MongoDB proposal on-chain.
+  const handleCreateOnBlockchain = async (proposal) => {
+    if (!walletConnected) {
+      setMessage("Connect MetaMask before creating a blockchain proposal.");
+      return;
     }
 
-    return null;
+    setLoading(true);
+    setMessage("");
+
+    try {
+      const contract = await getContract();
+
+      const existing = await findOnChainProposal(proposal, contract);
+
+      if (existing) {
+        setMessage(
+          `This proposal already exists on-chain as proposal #${existing.id}.`
+        );
+        await fetchProposals();
+        return;
+      }
+
+      setMessage(
+        "Confirm the create-proposal transaction in MetaMask."
+      );
+
+      const transaction = await contract.createProposal(
+        proposal.title.trim(),
+        proposal.description.trim()
+      );
+
+      setMessage("Transaction submitted. Waiting for confirmation...");
+      await transaction.wait();
+
+      setMessage(
+        `Proposal created on blockchain successfully as a new proposal. Transaction: ${transaction.hash}`
+      );
+
+      await fetchProposals();
+    } catch (error) {
+      console.error("Create on blockchain failed:", error);
+
+      setMessage(
+        error.code === "ACTION_REJECTED"
+          ? "Transaction rejected in MetaMask."
+          : error.reason ||
+              error.shortMessage ||
+              error.message ||
+              "Could not create the proposal on blockchain."
+      );
+    } finally {
+      setLoading(false);
+    }
   };
 
-  // Cast a YES or NO vote
+  // Cast a YES or NO vote.
   const handleVote = async (proposal, support) => {
     if (!walletConnected || !walletAddress) {
       setMessage("Please connect MetaMask before voting.");
@@ -383,8 +525,9 @@ function App() {
 
       if (!match) {
         setMessage(
-          "This proposal was not found on the current blockchain deployment."
+          "This proposal is not on the current blockchain. Create it on-chain first."
         );
+        await fetchProposals();
         return;
       }
 
@@ -401,10 +544,7 @@ function App() {
         votingWeight
       );
 
-      setMessage(
-        "Vote submitted. Waiting for blockchain confirmation..."
-      );
-
+      setMessage("Vote submitted. Waiting for blockchain confirmation...");
       await transaction.wait();
 
       const result = await contract.getProposalResult(match.id);
@@ -482,9 +622,7 @@ function App() {
         </button>
       )}
 
-      <p>
-        Blockchain-Based DAO Governance with Reputation-Driven Voting
-      </p>
+      <p>Blockchain-Based DAO Governance with Reputation-Driven Voting</p>
 
       <hr />
 
@@ -492,21 +630,11 @@ function App() {
 
       {profile ? (
         <div style={styles.card}>
-          <p>
-            <strong>Wallet:</strong> {profile.walletAddress}
-          </p>
-          <p>
-            <strong>Token Balance:</strong> {profile.tokenBalance}
-          </p>
-          <p>
-            <strong>Reputation:</strong> {profile.reputation}
-          </p>
-          <p>
-            <strong>Participation:</strong> {profile.participation}
-          </p>
-          <p>
-            <strong>Contribution:</strong> {profile.contribution}
-          </p>
+          <p><strong>Wallet:</strong> {profile.walletAddress}</p>
+          <p><strong>Token Balance:</strong> {profile.tokenBalance}</p>
+          <p><strong>Reputation:</strong> {profile.reputation}</p>
+          <p><strong>Participation:</strong> {profile.participation}</p>
+          <p><strong>Contribution:</strong> {profile.contribution}</p>
           <hr />
           <h3>Voting Weight: {votingWeight}</h3>
         </div>
@@ -517,10 +645,7 @@ function App() {
       <h2>Create Proposal</h2>
 
       <form onSubmit={handleCreateProposal}>
-        <label>
-          <strong>Proposal Title</strong>
-        </label>
-
+        <label><strong>Proposal Title</strong></label>
         <input
           type="text"
           value={title}
@@ -529,10 +654,7 @@ function App() {
           style={styles.input}
         />
 
-        <label>
-          <strong>Description</strong>
-        </label>
-
+        <label><strong>Description</strong></label>
         <textarea
           value={description}
           onChange={(event) => setDescription(event.target.value)}
@@ -561,66 +683,92 @@ function App() {
 
       <h2>Proposals</h2>
 
+      <button
+        style={styles.button}
+        onClick={fetchProposals}
+        disabled={loading}
+      >
+        Refresh Proposals & Votes
+      </button>
+
       {proposals.length === 0 && <p>No proposals found.</p>}
 
-      {proposals.map((proposal) => (
-        <div key={proposal._id} style={styles.card}>
-          <h3>{proposal.title}</h3>
+      {proposals.map((proposal) => {
+        const chainResult = onChainResults[proposal._id];
 
-          <p>{proposal.description}</p>
+        const approved =
+          proposal.aiValidation?.status === "approved" &&
+          proposal.status === "active";
 
-          <p>
-            <strong>Proposer:</strong> {proposal.proposerWallet}
-          </p>
+        return (
+          <div key={proposal._id} style={styles.card}>
+            <h3>{proposal.title}</h3>
+            <p>{proposal.description}</p>
+            <p><strong>Proposer:</strong> {proposal.proposerWallet}</p>
+            <p>
+              <strong>AI Validation:</strong>{" "}
+              {proposal.aiValidation?.status || "unknown"}
+            </p>
+            <p>
+              <strong>Similarity Score:</strong>{" "}
+              {proposal.aiValidation?.similarityScore ?? "N/A"}
+            </p>
+            <p><strong>Database Status:</strong> {proposal.status}</p>
 
-          <p>
-            <strong>AI Validation:</strong>{" "}
-            {proposal.aiValidation?.status || "unknown"}
-          </p>
-
-          <p>
-            <strong>Similarity Score:</strong>{" "}
-            {proposal.aiValidation?.similarityScore ?? "N/A"}
-          </p>
-
-          <p>
-            <strong>Status:</strong> {proposal.status}
-          </p>
-
-          <p>
-            <strong>YES:</strong> {proposal.yesVotes ?? 0}
-          </p>
-
-          <p>
-            <strong>NO:</strong> {proposal.noVotes ?? 0}
-          </p>
-
-          {proposal.aiValidation?.status === "approved" &&
-            proposal.status === "active" && (
-              <div>
-                <button
-                  style={styles.button}
-                  disabled={!walletConnected || votingId !== null}
-                  onClick={() => handleVote(proposal, true)}
-                >
-                  {votingId === proposal._id
-                    ? "Processing..."
-                    : "Vote Yes"}
-                </button>
-
-                <button
-                  style={styles.button}
-                  disabled={!walletConnected || votingId !== null}
-                  onClick={() => handleVote(proposal, false)}
-                >
-                  {votingId === proposal._id
-                    ? "Processing..."
-                    : "Vote No"}
-                </button>
-              </div>
+            {chainResult?.found ? (
+              <>
+                <p><strong>Blockchain Proposal ID:</strong> {chainResult.id}</p>
+                <p><strong>On-chain YES:</strong> {chainResult.yesVotes}</p>
+                <p><strong>On-chain NO:</strong> {chainResult.noVotes}</p>
+                <p>
+                  <strong>Total Voting Weight:</strong>{" "}
+                  {chainResult.totalVotingWeight}
+                </p>
+                <p>
+                  <strong>Blockchain Status:</strong>{" "}
+                  {chainResult.active ? "Active" : "Closed"}
+                </p>
+              </>
+            ) : (
+              <p>
+                <strong>Blockchain:</strong> Not created on the current deployment.
+              </p>
             )}
-        </div>
-      ))}
+
+            {approved && !chainResult?.found && (
+              <button
+                style={styles.button}
+                disabled={!walletConnected || loading}
+                onClick={() => handleCreateOnBlockchain(proposal)}
+              >
+                {loading ? "Processing..." : "Create on Blockchain"}
+              </button>
+            )}
+
+            {approved &&
+              chainResult?.found &&
+              chainResult.active && (
+                <div>
+                  <button
+                    style={styles.button}
+                    disabled={!walletConnected || votingId !== null || loading}
+                    onClick={() => handleVote(proposal, true)}
+                  >
+                    {votingId === proposal._id ? "Processing..." : "Vote Yes"}
+                  </button>
+
+                  <button
+                    style={styles.button}
+                    disabled={!walletConnected || votingId !== null || loading}
+                    onClick={() => handleVote(proposal, false)}
+                  >
+                    {votingId === proposal._id ? "Processing..." : "Vote No"}
+                  </button>
+                </div>
+              )}
+          </div>
+        );
+      })}
     </div>
   );
 }
